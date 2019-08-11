@@ -1,0 +1,14 @@
+kasa - read status of tp-link smart home devices and record in influx database
+
+* Install
+bundle install
+* Scan
+Usage:
+  kasa.rb record-status
+
+Options:
+      [--log], [--no-log]          # log output to ~/.log/.kasa.log
+                                   # Default: true
+  -v, [--verbose], [--no-verbose]  # increase verbosity
+
+Record current usage data to database
