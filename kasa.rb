@@ -53,7 +53,7 @@ class Kasa < Thor
       # Get array of TPLink Devices
       sh.devices.each do |device|
         @logger.info device.alias
-        power = sh.send_data(device, 'emeter' => { 'get_realtime' => nil })['responseData']['emeter']['get_realtime']['power']
+        power = sh.send_data(device, 'emeter' => { 'get_realtime' => nil })['responseData']['emeter']['get_realtime']['power'].to_f
         @logger.info power
 
         timestamp = Time.now.to_i
