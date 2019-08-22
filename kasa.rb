@@ -38,6 +38,7 @@ class Kasa < Thor
 
   class_option :log,     type: :boolean, default: true, desc: "log output to #{LOGFILE}"
   class_option :verbose, type: :boolean, aliases: '-v', desc: 'increase verbosity'
+  class_option :dry_run, type: :boolean, aliases: '-v', desc: "don't log to database"
 
   desc 'record-status', 'record the current usage data to database'
   def record_status
@@ -45,23 +46,35 @@ class Kasa < Thor
 
     credentials = YAML.load_file CREDENTIALS_PATH
     begin
-      sh=TPLink::SmartHome.new('user' => credentials[:user],
-                               'password' => credentials[:password])
+      sh = TPLink::SmartHome.new('user' => credentials[:user],
+                                 'password' => credentials[:password])
 
-      influxdb = InfluxDB::Client.new 'kasa'
+      influxdb = options[:dry_run] ? nil : (InfluxDB::Client.new 'kasa')
 
-      # Get array of TPLink Devices
       sh.devices.each do |device|
         @logger.info device.alias
-        power = sh.send_data(device, 'emeter' => { 'get_realtime' => nil })['responseData']['emeter']['get_realtime']['power'].to_f
-        @logger.info power
 
+        sysinfo = sh.send_data(device, 'system' => { 'get_sysinfo' => nil })['responseData']['system']['get_sysinfo']
         timestamp = Time.now.to_i
+        @logger.info sysinfo
         data = {
-          values: { value: power },
+          values: { value: sysinfo['relay_state'] },
+          tags: { alias: device.alias },
           timestamp: timestamp
         }
-        influxdb.write_point(device.alias, data)
+        influxdb.write_point('status', data) unless options[:dry_run]
+
+        next unless sysinfo['feature'].include? 'ENE' # does this device report power?
+
+        power = sh.send_data(device, 'emeter' => { 'get_realtime' => nil })['responseData']['emeter']['get_realtime']['power'].to_f
+        timestamp = Time.now.to_i
+        @logger.info "power #{power}"
+        data = {
+          values: { value: power },
+          tags: { alias: device.alias },
+          timestamp: timestamp
+        }
+        influxdb.write_point('power', data) unless options[:dry_run]
       end
     rescue StandardError => e
       @logger.error e
