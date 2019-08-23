@@ -76,6 +76,8 @@ class Kasa < Thor
         }
         influxdb.write_point('power', data) unless options[:dry_run]
       end
+    rescue TPLink::TPLinkCloudError => e
+      @logger.info e
     rescue StandardError => e
       @logger.error e
     end
