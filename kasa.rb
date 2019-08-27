@@ -45,42 +45,42 @@ class Kasa < Thor
     setup_logger
 
     credentials = YAML.load_file CREDENTIALS_PATH
-    begin
-      sh = TPLink::SmartHome.new('user' => credentials[:user],
-                                 'password' => credentials[:password])
+    sh = TPLink::SmartHome.new('user' => credentials[:user],
+                               'password' => credentials[:password])
 
-      influxdb = options[:dry_run] ? nil : (InfluxDB::Client.new 'kasa')
+    influxdb = options[:dry_run] ? nil : (InfluxDB::Client.new 'kasa')
 
-      sh.devices.each do |device|
-        @logger.info device.alias
+    sh.devices.each do |device|
+      @logger.info device.alias
 
-        sysinfo = sh.send_data(device, 'system' => { 'get_sysinfo' => nil })['responseData']['system']['get_sysinfo']
-        timestamp = Time.now.to_i
-        @logger.info sysinfo
-        data = {
-          values: { value: sysinfo['relay_state'] },
-          tags: { alias: device.alias },
-          timestamp: timestamp
-        }
-        influxdb.write_point('status', data) unless options[:dry_run]
+      sysinfo = sh.send_data(device, 'system' => { 'get_sysinfo' => nil })['responseData']['system']['get_sysinfo']
+      timestamp = Time.now.to_i
+      @logger.info sysinfo
+      data = {
+        values: { value: sysinfo['relay_state'] },
+        tags: { alias: device.alias },
+        timestamp: timestamp
+      }
+      influxdb.write_point('status', data) unless options[:dry_run]
 
-        next unless sysinfo['feature'].include? 'ENE' # does this device report power?
+      next unless sysinfo['feature'].include? 'ENE' # does this device report power?
 
-        power = sh.send_data(device, 'emeter' => { 'get_realtime' => nil })['responseData']['emeter']['get_realtime']['power'].to_f
-        timestamp = Time.now.to_i
-        @logger.info "power #{power}"
-        data = {
-          values: { value: power },
-          tags: { alias: device.alias },
-          timestamp: timestamp
-        }
-        influxdb.write_point('power', data) unless options[:dry_run]
-      end
+      power = sh.send_data(device, 'emeter' => { 'get_realtime' => nil })['responseData']['emeter']['get_realtime']['power'].to_f
+      timestamp = Time.now.to_i
+      @logger.info "power #{power}"
+      data = {
+        values: { value: power },
+        tags: { alias: device.alias },
+        timestamp: timestamp
+      }
+      influxdb.write_point('power', data) unless options[:dry_run]
+    rescue TPLink::DeviceOffline => e
+      @logger.info e
     rescue TPLink::TPLinkCloudError => e
       @logger.info e
-    rescue StandardError => e
-      @logger.error e
     end
+  rescue StandardError => e
+    @logger.error e
   end
 end
 
