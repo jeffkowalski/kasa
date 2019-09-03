@@ -38,7 +38,7 @@ class Kasa < Thor
 
   class_option :log,     type: :boolean, default: true, desc: "log output to #{LOGFILE}"
   class_option :verbose, type: :boolean, aliases: '-v', desc: 'increase verbosity'
-  class_option :dry_run, type: :boolean, aliases: '-v', desc: "don't log to database"
+  class_option :dry_run, type: :boolean, aliases: '-n', desc: "don't log to database"
 
   desc 'record-status', 'record the current usage data to database'
   def record_status
