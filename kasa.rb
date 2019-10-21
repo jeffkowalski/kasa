@@ -13,6 +13,21 @@ require 'influxdb'
 LOGFILE = File.join(Dir.home, '.log', 'kasa.log')
 CREDENTIALS_PATH = File.join(Dir.home, '.credentials', 'kasa.yaml')
 
+module Kernel
+  def with_rescue(exceptions, logger, retries: 5)
+    try = 0
+    begin
+      yield try
+    rescue *exceptions => e
+      try += 1
+      raise if try > retries
+
+      logger.info "caught error #{e.class}, retrying (#{try}/#{retries})..."
+      retry
+    end
+  end
+end
+
 class Kasa < Thor
   no_commands do
     def redirect_output
@@ -45,39 +60,46 @@ class Kasa < Thor
     setup_logger
 
     credentials = YAML.load_file CREDENTIALS_PATH
-    sh = TPLink::SmartHome.new('user' => credentials[:user],
-                               'password' => credentials[:password])
-
     influxdb = options[:dry_run] ? nil : (InfluxDB::Client.new 'kasa')
 
-    sh.devices.each do |device|
-      @logger.info device.alias
+    sh = TPLink::SmartHome.new('user' => credentials[:user],
+                               'password' => credentials[:password])
+    devices = with_rescue([Faraday::ConnectionFailed], @logger, retries: 3) do |_try|
+      sh.devices
+    end
+    devices.each do |device|
+      begin
+        @logger.info device.alias
 
-      sysinfo = sh.send_data(device, 'system' => { 'get_sysinfo' => nil })['responseData']['system']['get_sysinfo']
-      timestamp = Time.now.to_i
-      @logger.info sysinfo
-      data = {
-        values: { value: sysinfo['relay_state'] },
-        tags: { alias: device.alias },
-        timestamp: timestamp
-      }
-      influxdb.write_point('status', data) unless options[:dry_run]
+        sysinfo = with_rescue([Faraday::ConnectionFailed, TPLink::TPLinkCloudError], @logger, retries: 3) do |_try|
+          sh.send_data(device, 'system' => { 'get_sysinfo' => nil })['responseData']['system']['get_sysinfo']
+        end
+        timestamp = Time.now.to_i
+        @logger.info sysinfo
+        data = {
+          values: { value: sysinfo['relay_state'] },
+          tags: { alias: device.alias },
+          timestamp: timestamp
+        }
+        influxdb.write_point('status', data) unless options[:dry_run]
 
-      next unless sysinfo['feature'].include? 'ENE' # does this device report power?
+        next unless sysinfo['feature'].include? 'ENE' # does this device report power?
 
-      power = sh.send_data(device, 'emeter' => { 'get_realtime' => nil })['responseData']['emeter']['get_realtime']['power'].to_f
-      timestamp = Time.now.to_i
-      @logger.info "power #{power}"
-      data = {
-        values: { value: power },
-        tags: { alias: device.alias },
-        timestamp: timestamp
-      }
-      influxdb.write_point('power', data) unless options[:dry_run]
-    rescue TPLink::DeviceOffline => e
-      @logger.info e
-    rescue TPLink::TPLinkCloudError => e
-      @logger.info e
+        power = with_rescue([Faraday::ConnectionFailed, TPLink::TPLinkCloudError], @logger, retries: 3) do |_try|
+          sh.send_data(device, 'emeter' => { 'get_realtime' => nil })['responseData']['emeter']['get_realtime']['power'].to_f
+        end
+        timestamp = Time.now.to_i
+        @logger.info "power #{power}"
+        data = {
+          values: { value: power },
+          tags: { alias: device.alias },
+          timestamp: timestamp
+        }
+        influxdb.write_point('power', data) unless options[:dry_run]
+
+      rescue TPLink::DeviceOffline => e
+        @logger.info e
+      end
     end
   rescue StandardError => e
     @logger.error e
