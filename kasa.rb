@@ -64,7 +64,7 @@ class Kasa < Thor
 
     sh = TPLink::SmartHome.new('user' => credentials[:user],
                                'password' => credentials[:password])
-    devices = with_rescue([Faraday::ConnectionFailed], @logger, retries: 3) do |_try|
+    devices = with_rescue([Faraday::ConnectionFailed, TPLink::TPLinkCloudError], @logger, retries: 3) do |_try|
       sh.devices
     end
     devices.each do |device|
