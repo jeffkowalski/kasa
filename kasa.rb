@@ -76,12 +76,24 @@ class Kasa < Thor
         end
         timestamp = Time.now.to_i
         @logger.info sysinfo
-        data = {
-          values: { value: sysinfo['relay_state'] },
-          tags: { alias: device.alias },
-          timestamp: timestamp
-        }
-        influxdb.write_point('status', data) unless options[:dry_run]
+
+        if sysinfo['children']
+          sysinfo['children'].each do |child|
+            data = {
+              values: { value: child['state'] },
+              tags: { alias: child['alias'] },
+              timestamp: timestamp
+            }
+            influxdb.write_point('status', data) unless options[:dry_run]
+          end
+        else
+          data = {
+            values: { value: sysinfo['relay_state'] },
+            tags: { alias: device.alias },
+            timestamp: timestamp
+          }
+          influxdb.write_point('status', data) unless options[:dry_run]
+        end
 
         next unless sysinfo['feature'].include? 'ENE' # does this device report power?
 
