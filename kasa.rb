@@ -108,7 +108,6 @@ class Kasa < Thor
           timestamp: timestamp
         }
         influxdb.write_point('power', data) unless options[:dry_run]
-
       rescue TPLink::TPLinkCloudError => _e
         @logger.info 'too many TPLink::TPLinkCloudErrors, moving on'
       rescue TPLink::DeviceOffline => _e
