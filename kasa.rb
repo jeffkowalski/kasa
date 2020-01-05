@@ -68,51 +68,49 @@ class Kasa < Thor
       sh.devices
     end
     devices.each do |device|
-      begin
-        @logger.info device.alias
+      @logger.info device.alias
 
-        sysinfo = with_rescue([Faraday::ConnectionFailed, TPLink::TPLinkCloudError], @logger, retries: 3) do |_try|
-          sh.send_data(device, 'system' => { 'get_sysinfo' => nil })['responseData']['system']['get_sysinfo']
-        end
-        timestamp = Time.now.to_i
-        @logger.info sysinfo
+      sysinfo = with_rescue([Faraday::ConnectionFailed, TPLink::TPLinkCloudError], @logger, retries: 3) do |_try|
+        sh.send_data(device, 'system' => { 'get_sysinfo' => nil })['responseData']['system']['get_sysinfo']
+      end
+      timestamp = Time.now.to_i
+      @logger.info sysinfo
 
-        if sysinfo['children']
-          sysinfo['children'].each do |child|
-            data = {
-              values: { value: child['state'] },
-              tags: { alias: child['alias'] },
-              timestamp: timestamp
-            }
-            influxdb.write_point('status', data) unless options[:dry_run]
-          end
-        else
+      if sysinfo['children']
+        sysinfo['children'].each do |child|
           data = {
-            values: { value: sysinfo['relay_state'] },
-            tags: { alias: device.alias },
+            values: { value: child['state'] },
+            tags: { alias: child['alias'] },
             timestamp: timestamp
           }
           influxdb.write_point('status', data) unless options[:dry_run]
         end
-
-        next unless sysinfo['feature'].include? 'ENE' # does this device report power?
-
-        power = with_rescue([Faraday::ConnectionFailed, TPLink::TPLinkCloudError], @logger, retries: 3) do |_try|
-          sh.send_data(device, 'emeter' => { 'get_realtime' => nil })['responseData']['emeter']['get_realtime']['power'].to_f
-        end
-        timestamp = Time.now.to_i
-        @logger.info "power #{power}"
+      else
         data = {
-          values: { value: power },
+          values: { value: sysinfo['relay_state'] },
           tags: { alias: device.alias },
           timestamp: timestamp
         }
-        influxdb.write_point('power', data) unless options[:dry_run]
-      rescue TPLink::TPLinkCloudError => _e
-        @logger.info 'too many TPLink::TPLinkCloudErrors, moving on'
-      rescue TPLink::DeviceOffline => _e
-        @logger.info 'device is offline, moving on'
+        influxdb.write_point('status', data) unless options[:dry_run]
       end
+
+      next unless sysinfo['feature'].include? 'ENE' # does this device report power?
+
+      power = with_rescue([Faraday::ConnectionFailed, TPLink::TPLinkCloudError], @logger, retries: 3) do |_try|
+        sh.send_data(device, 'emeter' => { 'get_realtime' => nil })['responseData']['emeter']['get_realtime']['power'].to_f
+      end
+      timestamp = Time.now.to_i
+      @logger.info "power #{power}"
+      data = {
+        values: { value: power },
+        tags: { alias: device.alias },
+        timestamp: timestamp
+      }
+      influxdb.write_point('power', data) unless options[:dry_run]
+    rescue TPLink::TPLinkCloudError => _e
+      @logger.info 'too many TPLink::TPLinkCloudErrors, moving on'
+    rescue TPLink::DeviceOffline => _e
+      @logger.info 'device is offline, moving on'
     end
   rescue StandardError => e
     @logger.error e
