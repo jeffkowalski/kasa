@@ -45,6 +45,7 @@ GEM
 
 PLATFORMS
   ruby
+  x86_64-linux
 
 DEPENDENCIES
   influxdb!
@@ -56,4 +57,4 @@ DEPENDENCIES
   tp_link
 
 BUNDLED WITH
-   2.1.3
+   2.2.0
