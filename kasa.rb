@@ -4,14 +4,13 @@
 require 'thor'
 require 'fileutils'
 require 'logger'
-require 'yaml'
-require 'rest-client'
 require 'json'
-require 'tp_link'
 require 'influxdb'
+require 'socket'
+
+# see https://github.com/python-kasa/python-kasa
 
 LOGFILE = File.join(Dir.home, '.log', 'kasa.log')
-CREDENTIALS_PATH = File.join(Dir.home, '.credentials', 'kasa.yaml')
 
 module Kernel
   def with_rescue(exceptions, logger, retries: 5)
@@ -25,6 +24,47 @@ module Kernel
       logger.info "caught error #{e.class}, retrying (#{try}/#{retries})..."
       retry
     end
+  end
+end
+
+
+class TPLinkSmartHomeProtocol
+  INITIALIZATION_VECTOR = 171
+
+  def self.xor_payload(unencrypted)
+    key = INITIALIZATION_VECTOR
+    unencrypted.chars.map do |ch|
+      key = key ^ ch.ord
+    end
+  end
+
+  def self.encrypt(request)
+    #
+    # Encrypt a request for a TP-Link Smart Home Device.
+    # :param request: plaintext request data
+    # :return: ciphertext to be send over wire, in bytes
+    #
+    plainbytes = request.encode
+    len = plainbytes.length
+    xor_payload(plainbytes).pack("C#{len}")
+  end
+
+  def self.xor_encrypted_payload(ciphertext)
+    key = INITIALIZATION_VECTOR
+    ciphertext.chars.map do |cipherbyte|
+      plainbyte = key ^ cipherbyte.ord
+      key = cipherbyte.ord
+      plainbyte.chr
+    end
+  end
+
+  def self.decrypt(ciphertext)
+    #
+    # Decrypt a response of a TP-Link Smart Home Device.
+    # :param ciphertext: encrypted response data
+    # :return: plaintext response
+    #
+    xor_encrypted_payload(ciphertext).join('')
   end
 end
 
@@ -54,66 +94,86 @@ class Kasa < Thor
   class_option :log,     type: :boolean, default: true, desc: "log output to #{LOGFILE}"
   class_option :verbose, type: :boolean, aliases: '-v', desc: 'increase verbosity'
 
+  UDP_PORT = 9999
+  DISCOVERY_QUERY = { 'system': { 'get_sysinfo': nil },
+                      'time':   { 'get_time': nil },
+                      'emeter': { 'get_realtime': nil } }.freeze
+
   desc 'record-status', 'record the current usage data to database'
   method_option :dry_run, type: :boolean, aliases: '-n', desc: "don't log to database"
   def record_status
     setup_logger
 
-    credentials = YAML.load_file CREDENTIALS_PATH
     influxdb = options[:dry_run] ? nil : (InfluxDB::Client.new 'kasa')
 
-    sh = TPLink::SmartHome.new('user' => credentials[:user],
-                               'password' => credentials[:password])
-    devices = with_rescue([Faraday::ConnectionFailed, TPLink::TPLinkCloudError], @logger, retries: 3) do |_try|
-      sh.devices
-    end
-    devices.each do |device|
-      @logger.info device.alias
+    udpsock = UDPSocket.new
+    begin
+      udpsock.setsockopt Socket::SOL_SOCKET, Socket::SO_BROADCAST, true
+      udpsock.setsockopt Socket::SOL_SOCKET, Socket::SO_REUSEADDR, true
 
-      sysinfo = with_rescue([Faraday::ConnectionFailed, TPLink::TPLinkCloudError], @logger, retries: 3) do |_try|
-        sh.send_data(device, 'system' => { 'get_sysinfo' => nil })['responseData']['system']['get_sysinfo']
-      end
-      timestamp = Time.now.to_i
-      @logger.info sysinfo
+      @logger.info "sending broadcast to <broadcast> on port #{UDP_PORT}"
+      req = DISCOVERY_QUERY.to_json
+      @logger.debug req
+      encrypted_req = TPLinkSmartHomeProtocol.encrypt(req)
+      @logger.debug encrypted_req
+      udpsock.send encrypted_req, 0, '<broadcast>', UDP_PORT
 
-      if sysinfo['children']
-        sysinfo['children'].each do |child|
-          data = {
-            values: { value: child['state'] },
-            tags: { alias: child['alias'] },
-            timestamp: timestamp
-          }
-          influxdb.write_point('status', data) unless options[:dry_run]
+      data = []
+
+      start = Time.now
+      while Time.now < (start + 3)
+        message, info = udpsock.recvfrom_nonblock(1024, exception: false)
+        next if info.nil?
+
+        device = JSON.parse(TPLinkSmartHomeProtocol.decrypt(message))
+
+        @logger.debug device
+
+        get_time = device['time']['get_time']
+        timestamp = Time.new(get_time['year'], get_time['month'], get_time['mday'], get_time['hour'], get_time['min'], get_time['sec']).to_i
+
+        if device['system']['get_sysinfo']['children'] # e.g. KP200
+          device['system']['get_sysinfo']['children'].each do |child|
+            name = child['alias']
+            state = child['state']
+            @logger.info "device '#{name}' state = #{state}"
+
+            data.push({ series:    'status',
+                        values:    { value: state },
+                        tags:      { alias: name },
+                        timestamp: timestamp })
+          end
+        else
+          name = device['system']['get_sysinfo']['alias']
+          state = device['system']['get_sysinfo']['relay_state']
+          @logger.info "device '#{name}' state = #{state}"
+
+          data.push({ series:    'status',
+                      values:    { value: state },
+                      tags:      { alias: name },
+                      timestamp: timestamp })
+
+          unless (!device['emeter'].key?('get_realtime') || device['emeter']['get_realtime']['err_code'] != 0)
+            power = device['emeter']['get_realtime']['power'].to_f
+            @logger.info "device '#{name}' power = #{power}"
+            data.push({ series:    'power',
+                        values:    { value: power },
+                        tags:      { alias: name },
+                        timestamp: timestamp })
+          end
         end
-      else
-        data = {
-          values: { value: sysinfo['relay_state'] },
-          tags: { alias: device.alias },
-          timestamp: timestamp
-        }
-        influxdb.write_point('status', data) unless options[:dry_run]
       end
 
-      next unless sysinfo['feature'].include? 'ENE' # does this device report power?
+      influxdb.write_points data unless options[:dry_run]
+    rescue StandardError => e
+      @logger.error "caught exception #{e}"
+      @logger.error e.backtrace.join("\n")
+    ensure
+      @logger.info 'closing udp socket'
+      udpsock&.close
 
-      power = with_rescue([Faraday::ConnectionFailed, TPLink::TPLinkCloudError], @logger, retries: 3) do |_try|
-        sh.send_data(device, 'emeter' => { 'get_realtime' => nil })['responseData']['emeter']['get_realtime']['power'].to_f
-      end
-      timestamp = Time.now.to_i
-      @logger.info "power #{power}"
-      data = {
-        values: { value: power },
-        tags: { alias: device.alias },
-        timestamp: timestamp
-      }
-      influxdb.write_point('power', data) unless options[:dry_run]
-    rescue TPLink::TPLinkCloudError => _e
-      @logger.info 'too many TPLink::TPLinkCloudErrors, moving on'
-    rescue TPLink::DeviceOffline => _e
-      @logger.info 'device is offline, moving on'
+      @logger.info 'done'
     end
-  rescue StandardError => e
-    @logger.error e
   end
 end
 
