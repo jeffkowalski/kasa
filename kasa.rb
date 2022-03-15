@@ -51,6 +51,8 @@ class Kasa < RecorderBotBase
   DISCOVERY_QUERY = { 'system': { 'get_sysinfo': nil },
                       'time':   { 'get_time': nil },
                       'emeter': { 'get_realtime': nil } }.freeze
+  RESPONSE_TIME = 3      # time to collect responses, in seconds
+  RESPONSE_LENGTH = 4096 # longest message from device, in bytes
 
   no_commands do
     def main
@@ -71,8 +73,8 @@ class Kasa < RecorderBotBase
         data = []
 
         start = Time.now
-        while Time.now < (start + 3)
-          message, info = udpsock.recvfrom_nonblock(1024, exception: false)
+        while Time.now < (start + RESPONSE_TIME)
+          message, info = udpsock.recvfrom_nonblock(RESPONSE_LENGTH, exception: false)
           next if info.nil?
 
           device = JSON.parse(TPLinkSmartHomeProtocol.decrypt(message))
