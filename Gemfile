@@ -5,4 +5,3 @@ gem 'botbase', git: 'https://github.com/jeffkowalski/botbase'
 source 'https://rubygems.org'
 
 gem 'rest-client'
-gem 'tp_link'
