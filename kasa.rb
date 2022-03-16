@@ -48,9 +48,9 @@ end
 
 class Kasa < RecorderBotBase
   UDP_PORT = 9999
-  DISCOVERY_QUERY = { 'system': { 'get_sysinfo': nil },
-                      'time':   { 'get_time': nil },
-                      'emeter': { 'get_realtime': nil } }.freeze
+  DISCOVERY_QUERY = { system: { get_sysinfo:  nil },
+                      time:   { get_time:     nil },
+                      emeter: { get_realtime: nil } }.freeze
   RESPONSE_TIME = 3      # time to collect responses, in seconds
   RESPONSE_LENGTH = 4096 # longest message from device, in bytes
 
@@ -105,7 +105,7 @@ class Kasa < RecorderBotBase
                         tags:      { alias: name },
                         timestamp: timestamp })
 
-            unless (!device['emeter'].key?('get_realtime') || device['emeter']['get_realtime']['err_code'] != 0)
+            unless !device['emeter'].key?('get_realtime') || device['emeter']['get_realtime']['err_code'] != 0
               power = device['emeter']['get_realtime']['power'].to_f
               @logger.info "device '#{name}' power = #{power}"
               data.push({ series:    'power',
