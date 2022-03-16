@@ -12,3 +12,12 @@ Options:
   -v, [--verbose], [--no-verbose]  # increase verbosity
 
 Record current usage data to database
+* Notes
+Excellent bare-bones TP-Link Wi-Fi Smart Plug Protocol Client
+https://github.com/softScheck/tplink-smartplug
+https://raw.githubusercontent.com/softScheck/tplink-smartplug/master/tplink_smartplug.py
+
+Highly functional python-kasa library
+https://github.com/python-kasa/python-kasa
+Originally based on pyHS100, which gives a more succinct overview of capabilities
+https://github.com/GadgetReactor/pyHS100
