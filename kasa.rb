@@ -54,7 +54,23 @@ class Kasa < RecorderBotBase
   RESPONSE_TIME = 3      # time to collect responses, in seconds
   RESPONSE_LENGTH = 4096 # longest message from device, in bytes
 
+  class_option :experimental, type: :boolean
   no_commands do
+    def tcp_command(req, host, port = 9999)
+      @logger.debug "requesting from #{host}:#{port}  '#{req}'"
+      encrypted_req = TPLinkSmartHomeProtocol.encrypt(req)
+
+      tcpsock = TCPSocket.new(host, port)
+      tcpsock.send(encrypted_req, 0)
+      tcpsock.flush
+      message = tcpsock.read 2048
+      puts "message is #{message}"
+      tcpsock.close
+      response = JSON.parse(TPLinkSmartHomeProtocol.decrypt(message))
+      @logger.debug response
+      response
+    end
+
     def main
       influxdb = options[:dry_run] ? nil : (InfluxDB::Client.new 'kasa')
 
@@ -65,9 +81,9 @@ class Kasa < RecorderBotBase
 
         @logger.info "sending broadcast to <broadcast> on port #{UDP_PORT}"
         req = DISCOVERY_QUERY.to_json
-        @logger.debug req
+        @logger.debug "requesting #{req}"
         encrypted_req = TPLinkSmartHomeProtocol.encrypt(req)
-        @logger.debug encrypted_req
+        #@logger.debug encrypted_req
         udpsock.send encrypted_req, 0, '<broadcast>', UDP_PORT
 
         data = []
@@ -94,6 +110,16 @@ class Kasa < RecorderBotBase
                           values:    { value: state },
                           tags:      { alias: name },
                           timestamp: timestamp })
+            end
+
+            if options[:experimental]
+              # tplink_smartplug.py -t 10.0.0.60 -j {\"context\":{\"child_ids\":[\"80062D21C0AEC2B09AA1E67FDDD5C0E11AD78F1800\"]},\"system\":{\"get_sysinfo\":{}},\"emeter\":{\"get_realtime\":{}}}
+              # ~/tmp/tplink_smartplug.py -t 192.168.7.242 -j "{\"context\":{\"child_ids\":[\"00\", \"01\"]},\"system\":{\"get_sysinfo\":null},\"emeter\":{\"get_realtime\":null}}"
+              child_ids = device['system']['get_sysinfo']['children'].collect { |child| child['id'].to_s }
+              query = { context: { child_ids: child_ids } }.merge DISCOVERY_QUERY
+              query = DISCOVERY_QUERY
+              tcp_command query.to_json, '192.168.7.242'
+              exit
             end
           else
             name = device['system']['get_sysinfo']['alias']
