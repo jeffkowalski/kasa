@@ -80,8 +80,13 @@ class Kasa < RecorderBotBase
 
           @logger.debug device
 
-          get_time = device['time']['get_time']
-          timestamp = Time.new(get_time['year'], get_time['month'], get_time['mday'], get_time['hour'], get_time['min'], get_time['sec']).to_i
+          timestamp =
+          if device['time'].has_key?('get_time')
+            get_time = device['time']['get_time']
+            Time.new(get_time['year'], get_time['month'], get_time['mday'], get_time['hour'], get_time['min'], get_time['sec']).to_i
+          else
+            Time.now.to_i
+          end
 
           if device['system']['get_sysinfo']['children'] # e.g. KP200
             device['system']['get_sysinfo']['children'].each do |child|
