@@ -88,8 +88,10 @@ class Kasa < RecorderBotBase
             Time.now.to_i
           end
 
-          if device['system']['get_sysinfo']['children'] # e.g. KP200
-            device['system']['get_sysinfo']['children'].each do |child|
+          sysinfo = device['system']['get_sysinfo']
+
+          if sysinfo['children'] # e.g. KP200
+            sysinfo['children'].each do |child|
               name = child['alias']
               state = child['state']
               @logger.info "device '#{name}' state = #{state}"
@@ -100,8 +102,13 @@ class Kasa < RecorderBotBase
                           timestamp: timestamp })
             end
           else
-            name = device['system']['get_sysinfo']['alias']
-            state = device['system']['get_sysinfo']['relay_state']
+            name = sysinfo['alias']
+            state =
+            if (sysinfo.key?('relay_state'))
+              sysinfo['relay_state']
+            elsif (sysinfo.key?('light_state'))
+              sysinfo['light_state']['on_off']
+            end
             @logger.info "device '#{name}' state = #{state}"
 
             data.push({ series:    'status',
